@@ -3,77 +3,134 @@ const fs = require("fs");
 const path = require("path");
 
 const app = express();
-const PORT = process.env.PORT || 3000;
-
 app.use(express.json());
 app.use(express.static("public"));
 
-const DB_PATH = path.join(__dirname, "price.json");
-const MAX_HISTORY = 300;
+const PORT = process.env.PORT || 3000;
+const ADMIN_PATH = "/admin-secret-ttd";
+const ADMIN_PASSWORD = "ttd1234";
 
-// ✅ 가격 제한(원하면 숫자만 바꾸면 됨)
-const START_PRICE = 100000; // 시작가
-const MIN_PRICE = 50000;    // 하한(바닥)
-const MAX_PRICE = 200000;   // 상한(천장)
+const PRICE_FILE = "price.json";
 
-function ensureDB() {
-  if (!fs.existsSync(DB_PATH)) {
+// --------------------
+// 가격 로드 / 저장
+// --------------------
+function loadPrice() {
+  if (!fs.existsSync(PRICE_FILE)) {
     fs.writeFileSync(
-      DB_PATH,
-      JSON.stringify({ price: START_PRICE, history: [START_PRICE] }, null, 2)
+      PRICE_FILE,
+      JSON.stringify({ price: 100000, history: [100000] }, null, 2)
     );
   }
+  return JSON.parse(fs.readFileSync(PRICE_FILE));
 }
 
-function readDB() {
-  ensureDB();
-  return JSON.parse(fs.readFileSync(DB_PATH, "utf8"));
+function savePrice(data) {
+  fs.writeFileSync(PRICE_FILE, JSON.stringify(data, null, 2));
 }
 
-function writeDB(db) {
-  fs.writeFileSync(DB_PATH, JSON.stringify(db, null, 2));
-}
+let priceData = loadPrice();
 
-// 가격 조회
-app.get("/price", (req, res) => {
-  res.json(readDB());
-});
-
-// 보기 전용 (사람은 변경 불가)
-app.post("/price", (req, res) => {
-  return res.status(403).json({ message: "읽기 전용 사이트입니다" });
-});
-
-// ✅ 2분마다 자동 변동 + 상한/하한 강제 적용
+// --------------------
+// 자동 변동 (2분)
+// --------------------
 setInterval(() => {
-  try {
-    const db = readDB();
+  const changeRate = (Math.random() * 4 - 2) / 100; // -2% ~ +2%
+  let newPrice = Math.round(priceData.price * (1 + changeRate));
 
-    const change = (Math.random() * 4 - 2) / 100; // -2% ~ +2%
-    let next = Math.round(db.price * (1 + change));
+  // 최소 / 최대 제한
+  newPrice = Math.max(50000, Math.min(1000000, newPrice));
 
-    // ⭐ 상한/하한 적용(이게 핵심)
-    next = Math.max(MIN_PRICE, Math.min(MAX_PRICE, next));
+  priceData.price = newPrice;
+  priceData.history.push(newPrice);
+  savePrice(priceData);
 
-    db.price = next;
-    db.history.push(db.price);
+  console.log("자동 변동:", newPrice);
+}, 120000); // 2분
 
-    if (db.history.length > MAX_HISTORY) {
-      db.history = db.history.slice(-MAX_HISTORY);
-    }
-
-    writeDB(db);
-    console.log("AUTO PRICE:", db.price);
-  } catch (e) {
-    console.log("AUTO ERROR:", e.message);
-  }
-}, 2 * 60 * 1000);
-
-// 기본 페이지
-app.get("/", (req, res) => {
-  res.sendFile(path.join(__dirname, "public", "index.html"));
+// --------------------
+// 가격 조회 (모두 가능)
+// --------------------
+app.get("/price", (req, res) => {
+  res.json(priceData);
 });
 
+// ====================
+// 관리자 로그인
+// ====================
+app.get(ADMIN_PATH, (req, res) => {
+  res.send(`
+    <h2>TTD 관리자 로그인</h2>
+    <input type="password" id="pw" placeholder="비밀번호"/>
+    <button onclick="login()">로그인</button>
+    <p id="msg"></p>
+
+    <script>
+      async function login() {
+        const pw = document.getElementById("pw").value;
+        const r = await fetch("${ADMIN_PATH}/login", {
+          method: "POST",
+          headers: {"Content-Type":"application/json"},
+          body: JSON.stringify({ password: pw })
+        });
+        const d = await r.json();
+        if (d.ok) location.href = "${ADMIN_PATH}/panel";
+        else document.getElementById("msg").innerText = "❌ 비밀번호 틀림";
+      }
+    </script>
+  `);
+});
+
+app.post(ADMIN_PATH + "/login", (req, res) => {
+  if (req.body.password === ADMIN_PASSWORD) {
+    res.json({ ok: true });
+  } else {
+    res.json({ ok: false });
+  }
+});
+
+// ====================
+// 관리자 패널
+// ====================
+app.get(ADMIN_PATH + "/panel", (req, res) => {
+  res.send(`
+    <h2>TTD 관리자 패널</h2>
+    <p>현재가: <span id="p"></span></p>
+
+    <button onclick="change(1000)">+1,000</button>
+    <button onclick="change(-1000)">-1,000</button>
+    <button onclick="change(10000)">+10,000</button>
+    <button onclick="change(-10000)">-10,000</button>
+
+    <script>
+      async function load() {
+        const r = await fetch("/price");
+        const d = await r.json();
+        document.getElementById("p").innerText =
+          d.price.toLocaleString();
+      }
+      async function change(v) {
+        await fetch("${ADMIN_PATH}/change", {
+          method: "POST",
+          headers: {"Content-Type":"application/json"},
+          body: JSON.stringify({ delta: v })
+        });
+        load();
+      }
+      load();
+    </script>
+  `);
+});
+
+app.post(ADMIN_PATH + "/change", (req, res) => {
+  const delta = Number(req.body.delta || 0);
+  priceData.price += delta;
+  priceData.history.push(priceData.price);
+  savePrice(priceData);
+  res.json({ ok: true });
+});
+
+// --------------------
 app.listen(PORT, () => {
   console.log("서버 실행중 👉 http://localhost:" + PORT);
 });
