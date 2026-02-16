@@ -6,7 +6,7 @@ const fs = require("fs");
 const path = require("path");
 
 // ===============================
-// Express 앱 생성 (★ 핵심)
+// Express 앱 생성
 // ===============================
 const app = express();
 
@@ -22,7 +22,7 @@ app.use(express.json());
 app.use(express.static("public"));
 
 // ===============================
-// DB 설정
+// 파일 DB 설정
 // ===============================
 const DB_PATH = path.join(__dirname, "price.json");
 const MAX_HISTORY = 300;
@@ -57,13 +57,13 @@ app.get("/price", (req, res) => {
   res.json(readDB());
 });
 
-// 가격 변경 (❌ 사람은 불가: 읽기 전용)
+// 가격 변경 (사람 조작 불가: 보기 전용)
 app.post("/price", (req, res) => {
   return res.status(403).json({ message: "읽기 전용 사이트입니다" });
 });
 
 // ===============================
-// 서버 자동 가격 변동 (10분)
+// 서버 자동 가격 변동 (⏱️ 2분)
 // ===============================
 setInterval(() => {
   try {
@@ -81,7 +81,7 @@ setInterval(() => {
   } catch (e) {
     console.log("AUTO ERROR:", e.message);
   }
-}, 10 * 60 * 1000);
+}, 2 * 60 * 1000); // ⭐ 2분마다
 
 // ===============================
 // 기본 페이지
